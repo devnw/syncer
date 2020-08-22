@@ -42,10 +42,10 @@ jobs:
         run: |
           go get -u github.com/securego/gosec/cmd/gosec
           gosec ./...
-      - name: Execute staticcheck
-        run: |
-          go get -u honnef.co/go/tools/cmd/staticcheck
-          staticcheck -tests=0 ./...
+          # - name: Execute staticcheck
+          #   run: |
+          #     go get -u honnef.co/go/tools/cmd/staticcheck
+          #     staticcheck -tests=0 ./...
       - name: Execute go vet
         run: go vet -race ./...
   test:
