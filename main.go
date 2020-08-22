@@ -3,9 +3,11 @@ package main
 import (
 	"os"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/jessevdk/go-flags"
 )
 
+var options Options
 var parser = flags.NewParser(&options, flags.Default)
 
 func main() {
@@ -21,4 +23,5 @@ func main() {
 		}
 	}
 
+	spew.Dump(options)
 }
