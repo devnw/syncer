@@ -60,7 +60,14 @@ func printFiles(ctx context.Context, in <-chan file.Info) {
 			return
 		case f, ok := <-in:
 			if ok {
-				fmt.Println(filepath.Join(f.Path(), f.Name()))
+				fmt.Println(
+					filepath.Join(
+						f.Path(),
+						f.Name(),
+					),
+				)
+
+				fmt.Println(f.Hash())
 			} else {
 				return
 			}

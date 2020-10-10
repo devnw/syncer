@@ -7,11 +7,16 @@ package file
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
+
+	"github.com/devnw/alog"
 )
 
 // Info is an interface expansion of os.FileInfo
@@ -21,16 +26,23 @@ import (
 type Info interface {
 	os.FileInfo
 	Path() string
+	Hash() string
 }
 
 type info struct {
 	os.FileInfo
 	path string
+	hash string
 }
 
 // Path returns the path value of the file if one is set
 func (i info) Path() string {
 	return i.path
+}
+
+// Hash returns the sha256 hash of the file
+func (i info) Hash() string {
+	return i.hash
 }
 
 // Recurse is a method for concurrently recursing through a directory
@@ -68,10 +80,17 @@ func Recurse(ctx context.Context, path string) (<-chan Info, error) {
 	go func() {
 		defer close(files)
 		//TODO: decide what to do about errors here
-		_ = recurse(ctx, path, files)
+		select {
+		case <-ctx.Done():
+			return
+		case files <- <-recurse(ctx, path):
+		}
 	}()
 
-	return files, nil
+	// Hash the files before passing out
+	out := H256(ctx, files)
+
+	return out, nil
 }
 
 // recurse iterates through each file in a directory
@@ -80,31 +99,111 @@ func Recurse(ctx context.Context, path string) (<-chan Info, error) {
 func recurse(
 	ctx context.Context,
 	path string,
-	out chan<- Info,
-) error {
+) <-chan Info {
 
-	files, err := ioutil.ReadDir(path)
-	if err != nil {
-		return err
-	}
+	out := make(chan Info)
 
-	for _, file := range files {
-		if file.IsDir() {
+	go func() {
+		//defer close(out)
 
-			// Recurse the directory
-			// TODO: do something with the errors
-			_ = recurse(ctx, filepath.Join(path, file.Name()), out)
+		files, err := ioutil.ReadDir(path)
+		if err != nil {
+			return
 		}
 
-		// Push the file to the files channel for processing
+		for _, file := range files {
+			fmt.Printf("file %s\n", file.Name())
+			if file.IsDir() {
+
+				// Recurse the directory
+				// TODO: do something with the errors
+				files := recurse(
+					ctx,
+					filepath.Join(
+						path,
+						file.Name(),
+					),
+				)
+
+				go func(files <-chan Info) {
+
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						case out <- <-files:
+						}
+					}
+				}(files)
+
+			}
+
+			// Push the file to the files channel for processing
+			select {
+			case <-ctx.Done():
+				return
+			case out <- info{file, path, ""}:
+				// Pushed file to the files channel
+				fmt.Printf("Pushed %s\n", file.Name())
+			}
+
+		}
+	}()
+
+	return out
+}
+
+// H256 takes in file information and hashes the file
+func H256(ctx context.Context, files <-chan Info) <-chan Info {
+	out := make(chan Info)
+
+	// Start the internal routine
+	go func() {
+		defer close(out)
+		h := sha256.New()
+
 		select {
 		case <-ctx.Done():
-			return nil
-		case out <- info{file, path}:
-			// Pushed file to the files channel
+			return
+		case file, ok := <-files:
+			if ok {
+				fmt.Printf("summing file %s\n", file.Name())
+				f, err := os.Open(
+					filepath.Join(
+						file.Path(),
+						file.Name(),
+					),
+				)
+
+				if err != nil {
+					alog.Fatal(err, "error loading file")
+				}
+
+				defer func() {
+					_ = f.Close()
+				}()
+
+				if _, err := io.Copy(h, f); err != nil {
+					alog.Fatal(err)
+				}
+
+				select {
+				case <-ctx.Done():
+					return
+				case out <- info{
+					file,
+					file.Path(),
+					base64.StdEncoding.EncodeToString(
+						h.Sum(nil),
+					),
+				}:
+				}
+
+			} else {
+				return
+			}
 		}
+	}()
 
-	}
-
-	return nil
+	return out
 }
